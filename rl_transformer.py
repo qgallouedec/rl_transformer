@@ -1,9 +1,11 @@
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+
+from stable_baselines3.common.distributions import DiagGaussianDistribution
 
 
 def scaled_dot_product_attention(query: Tensor, key: Tensor, value: Tensor, mask: Optional[Tensor] = None) -> Tensor:
@@ -55,7 +57,7 @@ class PositionalEncoder(nn.Module):
         div_term = torch.exp(torch.arange(0, in_features, 2) * (-math.log(10000.0) / in_features))
         pe = torch.zeros(max_len, in_features)
         pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)[:, :-1]
         self.register_buffer("pe", pe)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -240,5 +242,57 @@ class Transformer(nn.Module):
         for transformer_layer in self.transformer_layers:
             x = transformer_layer(x)
         x = self.linear(x)
-        x = torch.softmax(x, dim=-1)
         return x
+
+
+class ActorCriticTransformer(nn.Module):
+    def __init__(self, action_size: int, feature_size: int) -> None:
+        super().__init__()
+        self.transformer = Transformer(obs_size + action_size, feature_size)
+        self.value_net = nn.Sequential(
+            nn.Linear(feature_size, feature_size),
+            nn.ReLU(),
+            nn.Linear(feature_size, 1),
+        )
+        self.action_net = nn.Linear(feature_size, action_size)
+        self.log_std = nn.Parameter(torch.zeros(action_size), requires_grad=True)
+        self.action_dist = DiagGaussianDistribution(action_size)
+
+    def forward(self, obs: Tensor, deterministic: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
+        # Extract features
+        features = self.transformer(obs)
+        # Critic
+        values = self.value_net(features)
+        # Actor
+        mean_actions = self.action_net(features)
+        distribution = self.action_dist.proba_distribution(mean_actions, self.log_std)
+        actions = distribution.get_actions(deterministic=deterministic)
+        log_prob = distribution.log_prob(actions)
+        # actions = actions.reshape((-1,)  self.action_space.shape)
+        return actions, values, log_prob
+
+
+if __name__ == "__main__":
+    # S0 A1 S1 A2 S2 A3 S3
+    batch_size = 8
+    seq_len = 499  # number of actions
+    action_size = 2
+    obs_size = 3
+    observations = torch.rand((batch_size, seq_len + 1, obs_size))  # [N, seq_len+1, obs_size]
+    actions = torch.rand((batch_size, seq_len, action_size))  # [N, seq_len, act_size]
+    # start_seq token
+    actions = torch.cat((torch.zeros((batch_size, 1, action_size)), actions), dim=1)  # [N, seq_len, act_size]
+
+    print(actions.shape, observations.shape)
+
+    # stack obs and action
+    action_obs = torch.cat((actions, observations), dim=2)
+    print(action_obs.shape)
+    # policy gets [a_t-2, s_t-2], [a_t-1, s_t-1], to get a_t
+
+    # feature_size = spaces.utils.flatdim(observation_space)
+    ac = ActorCriticTransformer(action_size=action_size, feature_size=16)
+
+    actions, values, log_prob = ac(action_obs) #  [N, seq_len, act_size] The action that the agent whould have taken at every step.
+
+    print(actions[0][-1])
