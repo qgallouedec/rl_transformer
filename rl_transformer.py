@@ -211,8 +211,8 @@ class Transformer(nn.Module):
         self,
         in_features: int,
         out_features: int,
-        num_layers: int = 6,
-        num_heads: int = 6,
+        num_layers: int = 4,
+        num_heads: int = 4,
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
         max_len: int = 500,
@@ -242,9 +242,3 @@ class Transformer(nn.Module):
         x = self.linear(x)
         x = torch.softmax(x, dim=-1)
         return x
-
-
-if __name__ == "__main__":
-    transformer = Transformer(6, 6).to("cuda")
-    input = torch.rand((3, 500, 6)).to("cuda") # (N, L, H_in)
-    print(transformer(input))
