@@ -1,18 +1,15 @@
-from typing import Dict, Tuple, Type, Union
-
+from typing import Dict
+import gymnasium as gym
 import numpy as np
 
 
 class EpisodeBuffer:
-    def __init__(
-        self,
-        buffer_size: int,
-        max_ep_len: int,
-        observation_shape: Tuple[int, ...],
-        observation_dtype: Union[Type, str, np.dtype],
-        action_shape: Tuple[int, ...],
-        action_dtype: Union[Type, str, np.dtype],
-    ) -> None:
+    def __init__(self, buffer_size: int, env: gym.Env) -> None:
+        max_ep_len = env.spec.max_episode_steps
+        observation_shape = env.observation_space.shape
+        observation_dtype = env.observation_space.dtype
+        action_shape = env.action_space.shape
+        action_dtype = env.action_space.dtype
         self.observations = np.zeros((buffer_size, max_ep_len + 1, *observation_shape), dtype=observation_dtype)
         self.actions = np.zeros((buffer_size, max_ep_len + 1, *action_shape), dtype=action_dtype)
         self.rewards = np.zeros((buffer_size, max_ep_len + 1), dtype=np.float32)
@@ -56,14 +53,9 @@ class EpisodeBuffer:
 if __name__ == "__main__":
     import gymnasium as gym
 
-    env = gym.make("Pendulum-v1")
-    max_ep_len = env.spec.max_episode_steps
-    observation_shape = env.observation_space.shape
-    observation_dtype = env.observation_space.dtype
-    action_shape = env.action_space.shape
-    action_dtype = env.action_space.dtype
+    env = gym.make("Pendulum-v1", render_mode="human")
 
-    buffer = EpisodeBuffer(10, max_ep_len, observation_shape, observation_dtype, action_shape, action_dtype)
+    buffer = EpisodeBuffer(10, env)
 
     observation, info = env.reset()
     buffer.new_episode(observation, info)
@@ -74,5 +66,3 @@ if __name__ == "__main__":
         if terminated or truncated:
             observation, info = env.reset()
             buffer.new_episode(observation, info)
-
-    print(buffer.observations)
