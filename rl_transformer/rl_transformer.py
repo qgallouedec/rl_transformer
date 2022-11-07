@@ -1,7 +1,7 @@
 import math
 from typing import Optional, Tuple
 
-import gymnasium as gym
+import gym
 import torch
 import torch.nn.functional as F
 from stable_baselines3.common.distributions import DiagGaussianDistribution
@@ -135,7 +135,7 @@ class ActorCriticTransformer(nn.Module):
 
 
 if __name__ == "__main__":
-    import gymnasium as gym
+    import gym
 
     env = gym.make("Pendulum-v1")
     ac = ActorCriticTransformer(env, d_model=16)

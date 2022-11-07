@@ -6,5 +6,5 @@ setup(
     url="https://github.com/qgallouedec/rl_transformer",
     description="RL Transformer",
     long_description=open("README.md").read(),
-    install_requires=["gymnasium", "torch", "black", "isort", "pytest", "stable-baselines3"],
+    install_requires=["gym==0.21", "torch", "black", "isort", "pytest", "stable-baselines3"],
 )

@@ -1,6 +1,6 @@
 from typing import Dict, Tuple
 
-import gymnasium as gym
+import gym
 import numpy as np
 
 
@@ -23,24 +23,22 @@ class EpisodeBuffer:
         self.observations = np.zeros((buffer_size, self.max_ep_len, *observation_shape), dtype=observation_dtype)
         self.actions = np.zeros((buffer_size, self.max_ep_len, *action_shape), dtype=action_dtype)
         self.rewards = np.zeros((buffer_size, self.max_ep_len), dtype=np.float32)
-        self.terminated = np.zeros((buffer_size, self.max_ep_len), dtype=bool)
-        self.truncated = np.zeros((buffer_size, self.max_ep_len), dtype=bool)
+        self.dones = np.zeros((buffer_size, self.max_ep_len), dtype=bool)
         self.infos = np.zeros((buffer_size, self.max_ep_len), dtype=dict)
         self.ep_length = np.zeros((buffer_size,), dtype=int)
 
         self.ep_idx = -1
         self.t = 0
 
-    def new_episode(self, observation: np.ndarray, info: Dict):
+    def new_episode(self, observation: np.ndarray) -> None:
         self.ep_idx += 1
         self.t = 0
         self.observations[self.ep_idx][self.t] = observation
-        self.infos[self.ep_idx][self.t] = info
         self.ep_length[self.ep_idx] += 1
         self.t += 1
 
     def add(
-        self, action: np.ndarray, observation: np.ndarray, reward: float, terminated: bool, truncated: bool, info: Dict
+        self, action: np.ndarray, observation: np.ndarray, reward: float, done: bool, info: Dict
     ) -> None:
         """
         Store a transition.
@@ -49,15 +47,13 @@ class EpisodeBuffer:
             observation (np.ndarray): Observation
             action (np.ndarray): Action
             reward (float): Reward
-            terminated (bool): Whether the episode is terminated
-            truncated (bool): Whether the episode is truncated
+            done (bool): Whether the episode is done
             info (Dict): Info dict
         """
         self.observations[self.ep_idx][self.t] = observation
         self.actions[self.ep_idx][self.t] = action
         self.rewards[self.ep_idx][self.t] = reward
-        self.terminated[self.ep_idx][self.t] = terminated
-        self.truncated[self.ep_idx][self.t] = truncated
+        self.dones[self.ep_idx][self.t] = done
         self.infos[self.ep_idx][self.t] = info
         self.ep_length[self.ep_idx] += 1
         self.t += 1
@@ -81,31 +77,30 @@ class EpisodeBuffer:
         observations = self.observations[ep_idxs[:, None], idx]
         actions = self.actions[ep_idxs[:, None], idx]
         rewards = self.rewards[ep_idxs[:, None], idx]
-        terminated = self.terminated[ep_idxs[:, None], idx]
-        truncated = self.truncated[ep_idxs[:, None], idx]
+        dones = self.dones[ep_idxs[:, None], idx]
         infos = self.infos[ep_idxs[:, None], idx]
         src_key_padding_mask = src_key_padding_mask[np.arange(batch_size)[:, None], idx]
 
-        return observations, actions, rewards, terminated, truncated, infos, src_key_padding_mask
+        return observations, actions, rewards, dones, infos, src_key_padding_mask
 
 
 if __name__ == "__main__":
 
-    import gymnasium as gym
+    import gym
 
     env = gym.make("Pendulum-v1")
 
     buffer = EpisodeBuffer(20, env)
 
-    observation, info = env.reset()
-    buffer.new_episode(observation, info)
+    observation = env.reset()
+    buffer.new_episode(observation)
     for _ in range(3000):
         observations, actions = buffer.get_current_episode()
         action = env.action_space.sample()
-        observation, reward, terminated, truncated, info = env.step(action)
-        buffer.add(action, observation, reward, terminated, truncated, info)
-        if terminated or truncated:
-            observation, info = env.reset()
-            buffer.new_episode(observation, info)
+        observation, reward, done, info = env.step(action)
+        buffer.add(action, observation, reward, done, info)
+        if done:
+            observation = env.reset()
+            buffer.new_episode(observation)
 
-    observations, actions, rewards, terminated, truncated, infos, src_key_padding_mask = buffer.sample(5)
+    observations, actions, rewards, done, infos, src_key_padding_mask = buffer.sample(5)
