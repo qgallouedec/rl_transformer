@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
+import torch.nn.functional as F
 
 
 def make_env(env_id, seed):
@@ -41,14 +42,23 @@ class Agent(nn.Module):
         )
 
     def get_value(self, x):
-        return self.critic(x)
+        return self.critic(x).squeeze(-1)
 
-    def get_action(self, x, action=None):
-        logits = self.actor(x)
+    def get_action(self, observation, action=None):
+        logits = self.actor(observation)
         probs = Categorical(logits=logits)
-        if action is None:
-            action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy()
+        action = probs.sample()
+        return action, probs.log_prob(action)
+
+    def get_log_prob(self, observation, action):
+        logits = self.actor(observation)
+        probs = Categorical(logits=logits)
+        return probs.log_prob(action)
+
+    def get_entropy(self, observation):
+        logits = self.actor(observation)
+        probs = Categorical(logits=logits)
+        return probs.entropy()
 
 
 def get_advantages(rewards, dones, values, gamma, gae_lambda):
@@ -63,8 +73,8 @@ def get_advantages(rewards, dones, values, gamma, gae_lambda):
     return advantages
 
 
-def get_explained_var(b_values, b_returns):
-    y_pred, y_true = b_values.numpy(), b_returns.numpy()
+def get_explained_var(values, returns):
+    y_pred, y_true = values.numpy(), returns.numpy()
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
     return explained_var
@@ -101,8 +111,8 @@ if __name__ == "__main__":
 
     # Storage setup (num_steps + 1 because we need the terminal values to compute the advantage)
     observations = torch.zeros((num_steps + 1, *env.observation_space.shape))
-    actions = torch.zeros((num_steps + 1, *env.action_space.shape))
-    logprobs = torch.zeros((num_steps + 1))
+    actions = torch.zeros((num_steps + 1, *env.action_space.shape), dtype=torch.long)
+    log_probs = torch.zeros((num_steps + 1))
     rewards = torch.zeros((num_steps + 1))
     dones = torch.zeros((num_steps + 1))
     values = torch.zeros((num_steps + 1))
@@ -129,11 +139,11 @@ if __name__ == "__main__":
         while step < num_steps:
             # Compute action
             with torch.no_grad():
-                action, logprob, _ = agent.get_action(observations[step])
+                action, log_prob = agent.get_action(observations[step])
 
             # Store
             actions[step] = action
-            logprobs[step] = logprob
+            log_probs[step] = log_prob
 
             # Step
             observation, reward, done, info = env.step(action.numpy())
@@ -160,45 +170,38 @@ if __name__ == "__main__":
         advantages = get_advantages(rewards, dones, values, gamma, gae_lambda)
         returns = advantages + values
 
-        b_obs = observations[:-1]
-        b_logprobs = logprobs[:-1]
-        b_actions = actions[:-1]
-        b_advantages = advantages[:-1]
-        b_returns = returns[:-1]
-        b_values = values[:-1]
-
         # Optimizing the policy and value network
-        b_inds = np.arange(num_steps)
         for epoch in range(update_epochs):
-            np.random.shuffle(b_inds)
+            b_inds = np.random.permutation(num_steps)
             for start in range(0, num_steps, minibatch_size):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
-
-                _, newlogprob, entropy = agent.get_action(b_obs[mb_inds], b_actions.long()[mb_inds])
-                newvalue = agent.get_value(b_obs[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
-                ratio = logratio.exp()
-
-                mb_advantages = b_advantages[mb_inds]
-                # Norm advantages:
-                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                b_observations = observations[mb_inds]
+                b_actions = actions[mb_inds]
+                b_advantages = advantages[mb_inds]
+                b_log_probs = log_probs[mb_inds]
+                b_values = values[mb_inds]
+                b_returns = returns[mb_inds]
 
                 # Policy loss
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                b_advantages = (b_advantages - torch.mean(b_advantages)) / (torch.std(b_advantages) + 1e-8)  # norm advantages
+                new_log_probs = agent.get_log_prob(b_observations, b_actions)
+                ratio = torch.exp(new_log_probs - b_log_probs)
+                pg_loss1 = -b_advantages * ratio
+                pg_loss2 = -b_advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
+                pg_loss = torch.mean(torch.max(pg_loss1, pg_loss2))
 
-                # Value loss
-                newvalue = newvalue.view(-1)
+                # Entropy loss
+                entropy_loss = torch.mean(agent.get_entropy(b_observations))
+
                 # Clip V-loss
-                v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                v_clipped = b_values[mb_inds] + torch.clamp(newvalue - b_values[mb_inds], -clip_coef, clip_coef)
-                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss = 0.5 * v_loss_max.mean()
+                new_values = agent.get_value(b_observations)
+                v_loss_unclipped = (new_values - b_returns) ** 2
+                v_clipped = b_values + torch.clamp(new_values - b_values, -clip_coef, clip_coef)
+                v_loss_clipped = (v_clipped - b_returns) ** 2
+                v_loss = 0.5 * torch.mean(torch.max(v_loss_unclipped, v_loss_clipped))
 
-                entropy_loss = entropy.mean()
+                # Total loss
                 loss = pg_loss - ent_coef * entropy_loss + v_loss * vf_coef
 
                 optimizer.zero_grad()
@@ -206,6 +209,6 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), max_grad_norm)
                 optimizer.step()
 
-        explained_var = get_explained_var(b_values, b_returns)
+        explained_var = get_explained_var(returns[:-1], values[:-1])
 
     env.close()
