@@ -149,6 +149,7 @@ if __name__ == "__main__":
             observation, reward, done, info = env.step(action.numpy())
             if done:
                 observation = env.reset()
+                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
 
             # Update count
             step += 1
@@ -161,10 +162,6 @@ if __name__ == "__main__":
             with torch.no_grad():
                 value = agent.get_value(observations[step])
             values[step] = value
-
-            # Log
-            if "episode" in info.keys():
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
 
         # Compute advanges and return
         advantages = get_advantages(rewards, dones, values, gamma, gae_lambda)
