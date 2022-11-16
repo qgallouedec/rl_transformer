@@ -43,30 +43,23 @@ class Agent(nn.Module):
     def get_value(self, x):
         return self.critic(x)
 
-    def get_action_and_value(self, x, action=None):
+    def get_action(self, x, action=None):
         logits = self.actor(x)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+        return action, probs.log_prob(action), probs.entropy()
 
 
-def get_advantages(rewards, num_steps, next_done, next_value, dones, values, gamma, gae_lambda):
-    rewards = rewards.unsqueeze(1)
-    dones = dones.unsqueeze(1)
-    values = values.unsqueeze(1)
+def get_advantages(rewards, dones, values, gamma, gae_lambda):
+    num_steps = rewards.shape[0] - 1
     advantages = torch.zeros_like(rewards)
     last_gae_lamda = 0
     for t in reversed(range(num_steps)):
-        if t == num_steps - 1:
-            nextnonterminal = 1.0 - next_done
-            nextvalues = next_value
-        else:
-            nextnonterminal = 1.0 - dones[t]
-            nextvalues = values[t]
-        delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t - 1]
-        advantages[t - 1] = delta + gamma * gae_lambda * nextnonterminal * last_gae_lamda
-        last_gae_lamda = advantages[t - 1]
+        advantages[t] = (
+            rewards[t + 1] + gamma * (1.0 - dones[t + 1]) * (values[t + 1] + gae_lambda * last_gae_lamda) - values[t]
+        )
+        last_gae_lamda = advantages[t]
     return advantages
 
 
@@ -82,31 +75,31 @@ if __name__ == "__main__":
 
     total_timesteps = 20_000
     num_steps = 128
-    batch_size = int(num_steps)
-    minibatch_size = batch_size // 4
+    num_updates = total_timesteps // num_steps
+    minibatch_size = num_steps // 4
     update_epochs = 4
-
-    learning_rate = 2.5e-4
-    seed = 1
 
     gamma = 0.99
     gae_lambda = 0.95
+    learning_rate = 2.5e-4
     clip_coef = 0.2
     ent_coef = 0.01
     vf_coef = 0.5
     max_grad_norm = 0.5
 
-    # TRY NOT TO MODIFY: seeding
+    # Seeding
+    seed = 1
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    # env setup
+    # Env setup
     env = make_env(env_id, seed)
 
+    # Agent setup
     agent = Agent(env)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
 
-    # ALGO Logic: Storage setup
+    # Storage setup (num_steps + 1 because we need the terminal values to compute the advantage)
     observations = torch.zeros((num_steps + 1, *env.observation_space.shape))
     actions = torch.zeros((num_steps + 1, *env.action_space.shape))
     logprobs = torch.zeros((num_steps + 1))
@@ -114,67 +107,76 @@ if __name__ == "__main__":
     dones = torch.zeros((num_steps + 1))
     values = torch.zeros((num_steps + 1))
 
-    # TRY NOT TO MODIFY: start the game
-    global_step = 0
-    obs = torch.Tensor(env.reset())
+    # Init the env
+    observation = env.reset()
     done = False
-    num_updates = total_timesteps // batch_size
 
-    for update in range(1, num_updates + 1):
+    global_step = 0
+    for update in range(num_updates):
         # Annealing the rate
-        new_lr = (1.0 - (update - 1.0) / num_updates) * learning_rate
+        new_lr = (1.0 - update / num_updates) * learning_rate
         optimizer.param_groups[0]["lr"] = new_lr
-        observations[0] = torch.Tensor(obs)
-        dones[0] = torch.Tensor([done])
+
         step = 0
+
+        # Store initial
+        observations[step] = torch.Tensor(observation)
+        dones[step] = done
+        with torch.no_grad():
+            value = agent.get_value(observations[step])
+        values[step] = value
+
         while step < num_steps:
-
+            # Compute action
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(observations[step])
+                action, logprob, _ = agent.get_action(observations[step])
 
-            values[step] = value.flatten()
+            # Store
             actions[step] = action
             logprobs[step] = logprob
 
-            obs, reward, done, info = env.step(action.numpy())
-
+            # Step
+            observation, reward, done, info = env.step(action.numpy())
             if done:
-                obs = env.reset()
+                observation = env.reset()
 
+            # Update count
             step += 1
             global_step += 1
 
+            # Store
             rewards[step] = reward
-            observations[step] = torch.Tensor(obs)
+            observations[step] = torch.Tensor(observation)
             dones[step] = done
+            with torch.no_grad():
+                value = agent.get_value(observations[step])
+            values[step] = value
 
+            # Log
             if "episode" in info.keys():
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
 
-        # bootstrap value if not done
-        with torch.no_grad():
-            next_value = agent.get_value(observations[step]).reshape(1, -1)
+        # Compute advanges and return
+        advantages = get_advantages(rewards, dones, values, gamma, gae_lambda)
+        returns = advantages + values
 
-        advantages = get_advantages(rewards, num_steps + 1, done, next_value, dones, values, gamma, gae_lambda)
-        returns = advantages + values.unsqueeze(1)
-
-        # flatten the batch
-        b_obs = observations[:-1].reshape((-1,) + env.observation_space.shape)
-        b_logprobs = logprobs[:-1].reshape(-1)
-        b_actions = actions[:-1].reshape((-1,) + env.action_space.shape)
-        b_advantages = advantages[:-1].reshape(-1)
-        b_returns = returns[:-1].reshape(-1)
-        b_values = values[:-1].reshape(-1)
+        b_obs = observations[:-1]
+        b_logprobs = logprobs[:-1]
+        b_actions = actions[:-1]
+        b_advantages = advantages[:-1]
+        b_returns = returns[:-1]
+        b_values = values[:-1]
 
         # Optimizing the policy and value network
-        b_inds = np.arange(batch_size)
+        b_inds = np.arange(num_steps)
         for epoch in range(update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, batch_size, minibatch_size):
+            for start in range(0, num_steps, minibatch_size):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+                _, newlogprob, entropy = agent.get_action(b_obs[mb_inds], b_actions.long()[mb_inds])
+                newvalue = agent.get_value(b_obs[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
