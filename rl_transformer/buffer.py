@@ -2,6 +2,21 @@ from typing import Dict, Tuple
 
 import gym
 import numpy as np
+import torch
+from torch import Tensor
+
+numpy_to_torch_dtype = {
+    np.uint8: torch.uint8,
+    np.int8: torch.int8,
+    np.int16: torch.int16,
+    np.int32: torch.int32,
+    np.int64: torch.int64,
+    np.float16: torch.float16,
+    np.float32: torch.float32,
+    np.float64: torch.float64,
+    np.complex64: torch.complex64,
+    np.complex128: torch.complex128,
+}
 
 
 class EpisodeBuffer:
@@ -20,27 +35,29 @@ class EpisodeBuffer:
         self.buffer_size = buffer_size
         self.max_ep_len = env.spec.max_episode_steps + 1
         observation_shape = env.observation_space.shape
-        observation_dtype = env.observation_space.dtype
+        observation_dtype = env.observation_space.dtype.type
         action_shape = env.action_space.shape
-        action_dtype = env.action_space.dtype
-        self.observations = np.zeros((buffer_size, self.max_ep_len, *observation_shape), dtype=observation_dtype)
-        self.values = np.zeros((buffer_size, self.max_ep_len), dtype=float)
-        self.actions = np.zeros((buffer_size, self.max_ep_len, *action_shape), dtype=action_dtype)
-        self.log_probs = np.zeros((buffer_size, self.max_ep_len), dtype=float)
-        self.rewards = np.zeros((buffer_size, self.max_ep_len), dtype=float)
-        self.dones = np.zeros((buffer_size, self.max_ep_len), dtype=bool)
-        self.infos = np.zeros((buffer_size, self.max_ep_len), dtype=dict)
-        self.ep_length = np.zeros((buffer_size,), dtype=int)
+        action_dtype = env.action_space.dtype.type
+        self.observations = torch.zeros(
+            (buffer_size, self.max_ep_len, *observation_shape), dtype=numpy_to_torch_dtype[observation_dtype]
+        )
+        self.values = torch.zeros((buffer_size, self.max_ep_len), dtype=float)
+        self.actions = torch.zeros((buffer_size, self.max_ep_len, *action_shape), dtype=numpy_to_torch_dtype[action_dtype])
+        self.log_probs = torch.zeros((buffer_size, self.max_ep_len), dtype=float)
+        self.rewards = torch.zeros((buffer_size, self.max_ep_len), dtype=float)
+        self.dones = torch.zeros((buffer_size, self.max_ep_len), dtype=bool)
+        # self.infos = torch.zeros((buffer_size, self.max_ep_len), dtype=dict)
+        self.ep_length = torch.zeros((buffer_size,), dtype=int)
 
         self.ep_idx = -1
         self.t = 0
 
-    def new_episode(self, observation: np.ndarray, value: float) -> None:
+    def new_episode(self, observation: Tensor, value: float) -> None:
         """
         Start a new episode.
 
         Args:
-            observation (np.ndarray): Observation
+            observation (Tensor): Observation
             value (float): Value of the observation
         """
         self.ep_idx += 1
@@ -50,15 +67,15 @@ class EpisodeBuffer:
         self.t += 1
 
     def add(
-        self, action: np.ndarray, log_prob: float, observation: np.ndarray, value: float, reward: float, done: bool, info: Dict
+        self, action: Tensor, log_prob: float, observation: Tensor, value: float, reward: float, done: bool, info: Dict
     ) -> None:
         """
         Store a transition.
 
         Args:
-            action (np.ndarray): Action
+            action (Tensor): Action
             log_prob (float): Log-probability of the action
-            observation (np.ndarray): Observation
+            observation (Tensor): Observation
             value (float): Value of the observation
             reward (float): Reward
             done (bool): Whether the episode is done
@@ -70,20 +87,20 @@ class EpisodeBuffer:
         self.values[self.ep_idx][self.t] = value
         self.rewards[self.ep_idx][self.t] = reward
         self.dones[self.ep_idx][self.t] = done
-        self.infos[self.ep_idx][self.t] = info
+        # self.infos[self.ep_idx][self.t] = info
         self.ep_length[self.ep_idx] += 1
         self.t += 1
 
-    def get_current_episode(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_current_episode(self) -> Tuple[Tensor, Tensor]:
         """
         Return the current observation and action sequence.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray]: observations (L+1, obs_shape) and actions (L, action_shape)
+            Tuple[Tensor, Tensor]: observations (L+1, obs_shape) and actions (L, action_shape)
         """
         return self.observations[self.ep_idx][: self.t], self.actions[self.ep_idx][: self.t - 1]
 
-    def sample(self, batch_size: int) -> Tuple[np.ndarray]:
+    def sample(self, batch_size: int) -> Tuple[Tensor]:
         ep_idxs = np.random.choice(np.arange(self.buffer_size), batch_size, p=self.ep_length / self.ep_length.sum())
         ep_length = self.ep_length[ep_idxs]
 
@@ -111,26 +128,3 @@ class EpisodeBuffer:
         """
         self.ep_idx = -1
         self.t = 0
-
-
-if __name__ == "__main__":
-
-    import gym
-
-    env = gym.make("Pendulum-v1")
-
-    buffer = EpisodeBuffer(20, env)
-
-    observation = env.reset()
-    value = 1.0
-    buffer.new_episode(observation, value)
-    for _ in range(3000):
-        action = env.action_space.sample()
-        log_prob = 0.0
-        observation, reward, done, info = env.step(action)
-        value = 1.0
-        buffer.add(action, log_prob, observation, value, reward, done, info)
-        if done:
-            observation = env.reset()
-            value = 1.0
-            buffer.new_episode(observation, value)
