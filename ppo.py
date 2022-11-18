@@ -73,8 +73,7 @@ def get_advantages(rewards, dones, values, gamma, gae_lambda):
     return advantages
 
 
-def get_explained_var(values, returns):
-    y_pred, y_true = values.numpy(), returns.numpy()
+def get_explained_var(y_pred, y_true):
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
     return explained_var
@@ -206,6 +205,6 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), max_grad_norm)
                 optimizer.step()
 
-        explained_var = get_explained_var(returns[:-1], values[:-1])
+        explained_var = get_explained_var(returns.numpy(), values.numpy())
 
     env.close()
