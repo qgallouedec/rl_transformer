@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 
+from rl_transformer.wrappers import TorchWrapper
+
 
 def make_env(env_id, seed):
 
@@ -73,8 +75,8 @@ def get_advantages(values, rewards, dones, gamma, gae_lambda):
 
 
 def get_explained_var(y_pred, y_true):
-    var_y = np.var(y_true)
-    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+    var_y = torch.var(y_true)
+    explained_var = torch.nan if var_y == 0 else 1 - torch.var(y_true - y_pred) / var_y
     return explained_var
 
 
@@ -101,7 +103,7 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
 
     # Env setup
-    env = make_env(env_id, seed)
+    env = TorchWrapper(make_env(env_id, seed))
 
     # Agent setup
     agent = Agent(env)
@@ -128,9 +130,9 @@ if __name__ == "__main__":
         step = 0
 
         # Store initial
-        observations[step] = torch.Tensor(observation)
+        observations[step] = observation
         with torch.no_grad():
-            values[step] = agent.get_value(observations[step])
+            values[step] = agent.get_value(observation)
 
         while step < num_steps:
             # Compute action
@@ -142,7 +144,7 @@ if __name__ == "__main__":
             log_probs[step] = log_prob
 
             # Step
-            observation, reward, done, info = env.step(action.numpy())
+            observation, reward, done, info = env.step(action)
             if done:
                 observation = env.reset()
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
@@ -152,7 +154,7 @@ if __name__ == "__main__":
             global_step += 1
 
             # Store
-            observations[step] = torch.Tensor(observation)
+            observations[step] = observation
             with torch.no_grad():
                 values[step] = agent.get_value(observations[step])
             rewards[step] = reward
@@ -201,6 +203,6 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), max_grad_norm)
                 optimizer.step()
 
-        explained_var = get_explained_var(returns.numpy(), values.numpy())
+        explained_var = get_explained_var(returns, values)
 
     env.close()
