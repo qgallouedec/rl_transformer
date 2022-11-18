@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
-import torch.nn.functional as F
 
 
 def make_env(env_id, seed):
@@ -61,7 +60,7 @@ class Agent(nn.Module):
         return probs.entropy()
 
 
-def get_advantages(rewards, dones, values, gamma, gae_lambda):
+def get_advantages(values, rewards, dones, gamma, gae_lambda):
     num_steps = rewards.shape[0] - 1
     advantages = torch.zeros_like(rewards)
     last_gae_lamda = 0
@@ -110,11 +109,11 @@ if __name__ == "__main__":
 
     # Storage setup (num_steps + 1 because we need the terminal values to compute the advantage)
     observations = torch.zeros((num_steps + 1, *env.observation_space.shape))
+    values = torch.zeros((num_steps + 1))
     actions = torch.zeros((num_steps + 1, *env.action_space.shape), dtype=torch.long)
     log_probs = torch.zeros((num_steps + 1))
     rewards = torch.zeros((num_steps + 1))
     dones = torch.zeros((num_steps + 1))
-    values = torch.zeros((num_steps + 1))
 
     # Init the env
     observation = env.reset()
@@ -130,10 +129,8 @@ if __name__ == "__main__":
 
         # Store initial
         observations[step] = torch.Tensor(observation)
-        dones[step] = done
         with torch.no_grad():
-            value = agent.get_value(observations[step])
-        values[step] = value
+            values[step] = agent.get_value(observations[step])
 
         while step < num_steps:
             # Compute action
@@ -155,15 +152,14 @@ if __name__ == "__main__":
             global_step += 1
 
             # Store
-            rewards[step] = reward
             observations[step] = torch.Tensor(observation)
-            dones[step] = done
             with torch.no_grad():
-                value = agent.get_value(observations[step])
-            values[step] = value
+                values[step] = agent.get_value(observations[step])
+            rewards[step] = reward
+            dones[step] = done
 
         # Compute advanges and return
-        advantages = get_advantages(rewards, dones, values, gamma, gae_lambda)
+        advantages = get_advantages(values, rewards, dones, gamma, gae_lambda)
         returns = advantages + values
 
         # Optimizing the policy and value network
@@ -173,11 +169,11 @@ if __name__ == "__main__":
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
                 b_observations = observations[mb_inds]
-                b_actions = actions[mb_inds]
-                b_advantages = advantages[mb_inds]
-                b_log_probs = log_probs[mb_inds]
                 b_values = values[mb_inds]
+                b_actions = actions[mb_inds]
+                b_log_probs = log_probs[mb_inds]
                 b_returns = returns[mb_inds]
+                b_advantages = advantages[mb_inds]
 
                 # Policy loss
                 b_advantages = (b_advantages - torch.mean(b_advantages)) / (torch.std(b_advantages) + 1e-8)  # norm advantages
