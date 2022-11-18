@@ -94,14 +94,15 @@ class ActorCriticTransformer(nn.Module):
         Compute the  predicted actions and values given the episodes.
 
         Args:
-            observations (Tensor): Observation of shape (N, L, obs_size)
-            actions (Tensor): Actions of shape (N, L, action_size).
+            observations (Tensor): Observation of shape (N, L+1, obs_size). Ending with s_t.
+            actions (Tensor): Actions of shape (N, L, action_size). Ending with a_{t-1}
             deterministic (bool): If actor acts deterinistially
 
         Returns:
             Predicted actions, values and log_prob
         """
-        observations_actions = torch.dstack((observations, actions))  # (N, L, observation_size + action_size)
+        actions = torch.hstack((torch.zeros(actions.shape[0], 1, actions.shape[2]), actions))  # (N, L, *) to (N, L+1, *)
+        observations_actions = torch.dstack((observations, actions))  # (N, L+1, observation_size + action_size)
         x = self.input_encoder(observations_actions)
         x = self.positional_encoder(x)
         mask = self.mask[: x.size(1), : x.size(1)]
@@ -143,6 +144,6 @@ if __name__ == "__main__":
     obs_size = env.observation_space.shape[0]
     action_size = env.action_space.shape[0]
     observations = torch.rand((13, obs_size))
-    actions = torch.rand((13, action_size))
+    actions = torch.rand((12, action_size))
 
-    print(ac.act(observations, actions))
+    print(ac.act(observations, actions[:-1]))
