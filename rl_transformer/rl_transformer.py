@@ -3,9 +3,10 @@ from typing import Optional, Tuple
 
 import gym
 import torch
-import torch.nn.functional as F
 from stable_baselines3.common.distributions import DiagGaussianDistribution
 from torch import Tensor, nn
+
+from rl_transformer.utils import get_space_dim
 
 
 class PositionalEncoder(nn.Module):
@@ -70,8 +71,8 @@ class ActorCriticTransformer(nn.Module):
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
-        obs_size = env.observation_space.shape[0]
-        action_size = env.action_space.shape[0]
+        obs_size = get_space_dim(env.observation_space)
+        action_size = get_space_dim(env.action_space)
         max_len = env.spec.max_episode_steps + 1
         self.input_encoder = nn.Linear(obs_size + action_size, d_model)
         self.positional_encoder = PositionalEncoder(d_model, max_len, dropout)
@@ -121,8 +122,8 @@ class ActorCriticTransformer(nn.Module):
         Compute the  predicted action given the episode.
 
         Args:
-            observations (Tensor): Observation of shape (L, obs_size)
-            actions (Tensor): Actions of shape (L, action_size)
+            observations (Tensor): Observation of shape (L+1, obs_size). Ending with s_t.
+            actions (Tensor): Actions of shape (L, action_size). Ending with a_{t-1}
             deterministic (bool): If actor acts deterinistially
 
         Returns:
@@ -146,4 +147,4 @@ if __name__ == "__main__":
     observations = torch.rand((13, obs_size))
     actions = torch.rand((12, action_size))
 
-    print(ac.act(observations, actions[:-1]))
+    print(ac.act(observations, actions))
