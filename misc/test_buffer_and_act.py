@@ -1,18 +1,22 @@
 import gym
-import torch
 
 from rl_transformer.buffer import EpisodeBuffer
 from rl_transformer.wrappers import TorchWrapper
+from rl_transformer.rl_transformer import ActorCriticTransformer
 
 env = TorchWrapper(gym.make("Pendulum-v1"))
 
 buffer = EpisodeBuffer(20, env)
 
+ac = ActorCriticTransformer(env, d_model=16)
+
+
 observation = env.reset()
 value = 1.0
 buffer.new_episode(observation, value)
 for _ in range(3000):
-    action = torch.Tensor(env.action_space.sample())
+    observations, actions = buffer.get_current_episode()
+    action = ac.act(observations, actions)
     log_prob = 0.0
     observation, reward, done, info = env.step(action)
     value = 1.0
