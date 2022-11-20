@@ -3,10 +3,11 @@ from typing import Optional, Tuple
 
 import gym
 import torch
-from stable_baselines3.common.distributions import DiagGaussianDistribution
+from gym import spaces
 from torch import Tensor, nn
+from torch.distributions import Categorical, Normal
 
-from rl_transformer.utils import get_space_dim
+from rl_transformer.utils import get_space_size, preprocess
 
 
 class PositionalEncoder(nn.Module):
@@ -71,8 +72,10 @@ class ActorCriticTransformer(nn.Module):
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
-        obs_size = get_space_dim(env.observation_space)
-        action_size = get_space_dim(env.action_space)
+        self.observation_space = env.observation_space
+        self.action_space = env.action_space
+        obs_size = get_space_size(self.observation_space)
+        action_size = get_space_size(self.action_space)
         max_len = env.spec.max_episode_steps + 1
         self.input_encoder = nn.Linear(obs_size + action_size, d_model)
         self.positional_encoder = PositionalEncoder(d_model, max_len, dropout)
@@ -85,8 +88,8 @@ class ActorCriticTransformer(nn.Module):
             nn.Linear(d_model, 1),
         )
         self.action_net = nn.Linear(d_model, action_size)
-        self.log_std = nn.Parameter(torch.zeros(action_size), requires_grad=True)
-        self.action_dist = DiagGaussianDistribution(action_size)
+        if isinstance(self.action_space, spaces.Box):
+            self.log_std = nn.Parameter(torch.zeros(action_size), requires_grad=True)
 
     def forward(
         self, observations: Tensor, actions: Tensor, src_key_padding_mask: Optional[Tensor] = None, deterministic: bool = False
@@ -102,6 +105,8 @@ class ActorCriticTransformer(nn.Module):
         Returns:
             Predicted actions, values and log_prob
         """
+        observations = preprocess(observations, self.observation_space)
+        actions = preprocess(actions, self.action_space)
         actions = torch.hstack((torch.zeros(actions.shape[0], 1, actions.shape[2]), actions))  # (N, L, *) to (N, L+1, *)
         observations_actions = torch.dstack((observations, actions))  # (N, L+1, observation_size + action_size)
         x = self.input_encoder(observations_actions)
@@ -111,9 +116,21 @@ class ActorCriticTransformer(nn.Module):
         # Critic
         values = self.value_net(x)
         # Actor
-        mean_actions = self.action_net(x)
-        distribution = self.action_dist.proba_distribution(mean_actions, self.log_std)
-        actions = distribution.get_actions(deterministic=deterministic)
+        if isinstance(self.action_space, spaces.Box):
+            mean_actions = self.action_net(x)
+            action_std = torch.ones_like(mean_actions) * self.log_std.exp()
+            distribution = Normal(mean_actions, action_std)
+            if deterministic:
+                actions = distribution.mean
+            else:
+                actions = distribution.rsample()
+        elif isinstance(self.action_space, spaces.Discrete):
+            action_logits = self.action_net(x)
+            distribution = Categorical(logits=action_logits)
+            if deterministic:
+                actions = distribution.sample()
+            else:
+                actions = torch.argmax(distribution.probs, dim=-1)
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
 
