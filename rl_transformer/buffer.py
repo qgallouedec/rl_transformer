@@ -1,11 +1,10 @@
 from typing import Dict, Optional, Tuple, Union
 
 import gym
-import numpy as np
 import torch
 from torch import Tensor
 
-from rl_transformer.utils import NUMPY_TO_TORCH_DTYPE
+from rl_transformer.utils import NUMPY_TO_TORCH_DTYPE, get_space_shape
 
 
 class EpisodeBuffer:
@@ -24,9 +23,9 @@ class EpisodeBuffer:
         self.buffer_size = buffer_size
         self.device = device
         self.max_ep_len = env.spec.max_episode_steps + 1
-        observation_shape = env.observation_space.shape
+        observation_shape = get_space_shape(env.observation_space)
         observation_dtype = NUMPY_TO_TORCH_DTYPE[env.observation_space.dtype.type]
-        action_shape = env.action_space.shape
+        action_shape = get_space_shape(env.action_space)
         action_dtype = NUMPY_TO_TORCH_DTYPE[env.action_space.dtype.type]
         self.observations = torch.zeros(
             (buffer_size, self.max_ep_len, *observation_shape), dtype=observation_dtype, device=self.device
@@ -91,26 +90,41 @@ class EpisodeBuffer:
         return self.observations[self.ep_idx][: self.t], self.actions[self.ep_idx][: self.t - 1]
 
     def sample(self, batch_size: int) -> Tuple[Tensor]:
-        ep_idxs = np.random.choice(np.arange(self.buffer_size), batch_size, p=self.ep_length / self.ep_length.sum())
+        """
+        _summary_
+
+        Args:
+            batch_size (int): Batch size
+
+        Returns:
+            Tuple[Tensor]: observations, values, actions, log_prob, rewards, dones, infos, src_key_padding_mask
+            indexed in the standard way.
+        """
+        ep_idxs = torch.multinomial(self.ep_length.float(), batch_size, replacement=True)
         ep_length = self.ep_length[ep_idxs]
 
         # Create the mask
         # True for sampled_start < timesteps < ep_length, and False otherwise
-        episode_mask = np.arange(self.max_ep_len)[None, :] < ep_length[:, None]
-        ep_starts = np.random.randint(0, self.ep_length[ep_idxs] - 1)
-        sampled_start_mask = ep_starts[:, None] <= np.arange(self.max_ep_len)[None, :]
-        src_key_padding_mask = np.logical_and(episode_mask, sampled_start_mask)
+        episode_mask = torch.arange(self.max_ep_len, device=self.device)[None, :] < ep_length[:, None]
+        ep_starts = torch.concatenate([torch.randint(high, (1,), device=self.device) for high in ep_length - 1])
+        # torch.random.randint(0, self.ep_length[ep_idxs] - 1)
+
+        sampled_start_mask = ep_starts[:, None] <= torch.arange(self.max_ep_len, device=self.device)[None, :]
+        src_key_padding_mask = torch.logical_and(episode_mask, sampled_start_mask)
 
         # Shift right (so that the last observation is right)
-        idx = (np.arange(self.max_ep_len) + self.ep_length[ep_idxs, None]) % self.max_ep_len
+        idx = (torch.arange(self.max_ep_len, device=self.device) + self.ep_length[ep_idxs, None]) % self.max_ep_len
         observations = self.observations[ep_idxs[:, None], idx]
+        values = self.values[ep_idxs[:, None], idx]
         actions = self.actions[ep_idxs[:, None], idx]
+        log_probs = self.log_probs[ep_idxs[:, None], idx]
         rewards = self.rewards[ep_idxs[:, None], idx]
         dones = self.dones[ep_idxs[:, None], idx]
-        infos = self.infos[ep_idxs[:, None], idx]
-        src_key_padding_mask = src_key_padding_mask[np.arange(batch_size)[:, None], idx]
+        # infos = self.infos[ep_idxs[:, None], idx]
+        infos = [{} for _ in range(batch_size)]
+        src_key_padding_mask = src_key_padding_mask[torch.arange(batch_size, device=self.device)[:, None], idx]
 
-        return observations, actions, rewards, dones, infos, src_key_padding_mask
+        return observations, values, actions, log_probs, rewards, dones, infos, src_key_padding_mask
 
     def clear(self) -> None:
         """
