@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import gym
 import numpy as np
@@ -20,23 +20,24 @@ class EpisodeBuffer:
         env (gym.Env): The envrionment
     """
 
-    def __init__(self, buffer_size: int, env: gym.Env) -> None:
+    def __init__(self, buffer_size: int, env: gym.Env, device: Optional[Union[torch.device, str]] = None) -> None:
         self.buffer_size = buffer_size
+        self.device = device
         self.max_ep_len = env.spec.max_episode_steps + 1
         observation_shape = env.observation_space.shape
-        observation_dtype = env.observation_space.dtype.type
+        observation_dtype = NUMPY_TO_TORCH_DTYPE[env.observation_space.dtype.type]
         action_shape = env.action_space.shape
-        action_dtype = env.action_space.dtype.type
+        action_dtype = NUMPY_TO_TORCH_DTYPE[env.action_space.dtype.type]
         self.observations = torch.zeros(
-            (buffer_size, self.max_ep_len, *observation_shape), dtype=NUMPY_TO_TORCH_DTYPE[observation_dtype]
+            (buffer_size, self.max_ep_len, *observation_shape), dtype=observation_dtype, device=self.device
         )
-        self.values = torch.zeros((buffer_size, self.max_ep_len), dtype=float)
-        self.actions = torch.zeros((buffer_size, self.max_ep_len, *action_shape), dtype=NUMPY_TO_TORCH_DTYPE[action_dtype])
-        self.log_probs = torch.zeros((buffer_size, self.max_ep_len), dtype=float)
-        self.rewards = torch.zeros((buffer_size, self.max_ep_len), dtype=float)
-        self.dones = torch.zeros((buffer_size, self.max_ep_len), dtype=bool)
+        self.values = torch.zeros((buffer_size, self.max_ep_len), dtype=float, device=self.device)
+        self.actions = torch.zeros((buffer_size, self.max_ep_len, *action_shape), dtype=action_dtype, device=self.device)
+        self.log_probs = torch.zeros((buffer_size, self.max_ep_len), dtype=float, device=self.device)
+        self.rewards = torch.zeros((buffer_size, self.max_ep_len), dtype=float, device=self.device)
+        self.dones = torch.zeros((buffer_size, self.max_ep_len), dtype=bool, device=self.device)
         # self.infos = torch.zeros((buffer_size, self.max_ep_len), dtype=dict)
-        self.ep_length = torch.zeros((buffer_size,), dtype=int)
+        self.ep_length = torch.zeros((buffer_size,), dtype=int, device=self.device)
 
         self.ep_idx = -1
         self.t = 0
