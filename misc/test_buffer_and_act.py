@@ -1,8 +1,8 @@
 import gym
 
 from rl_transformer.buffer import EpisodeBuffer
-from rl_transformer.wrappers import TorchWrapper
 from rl_transformer.rl_transformer import ActorCriticTransformer
+from rl_transformer.wrappers import TorchWrapper
 
 env = TorchWrapper(gym.make("Pendulum-v1"))
 
