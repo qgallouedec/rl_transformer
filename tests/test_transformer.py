@@ -45,6 +45,6 @@ def test_interract(observation_space, action_space):
             else:
                 actions = np.array([action_space.sample() for _ in range(t)])
             actions = torch.tensor(actions)
-            action = ac.act(observations, actions)
+            action, _, _ = ac.act(observations, actions)
             _, _, done, _ = env.step(action)
             t += 1
