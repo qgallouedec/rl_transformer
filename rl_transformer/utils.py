@@ -18,7 +18,8 @@ NUMPY_TO_TORCH_DTYPE = {
 
 
 def get_space_size(space: spaces.Space) -> int:
-    """Return de size of the space.
+    """
+    Return de size of the space.
 
     Args:
         space (spaces.Space): The space
@@ -30,13 +31,37 @@ def get_space_size(space: spaces.Space) -> int:
         return space.n
     elif isinstance(space, spaces.Box):
         return np.prod(space.shape)
+    else:
+        raise NotImplementedError
+
+
+def get_space_shape(space: spaces.Space) -> int:
+    """
+    Return de shape of the space.
+
+    Args:
+        space (spaces.Space): The space
+
+    Returns:
+        int: The shape of the space
+    """
+    if isinstance(space, spaces.Discrete):
+        return tuple()
+    elif isinstance(space, spaces.Box):
+        return space.shape
+    else:
+        raise NotImplementedError
 
 
 def preprocess(tensor: torch.Tensor, space: spaces.Space) -> torch.Tensor:
-    """Preprocess a tensor
+    """
+    Preprocess a tensor
+
+    For Box, convert to float32
+    For Discrete, make one_hot and convert to float32
 
     Args:
-        tensor (torch.Tensor): The input tensor
+        tensor (torch.Tensor): The input tensor of shape (..., space_shape)
         space (spaces.Space): The space from which the tensor is from
 
     Raises:
