@@ -131,6 +131,8 @@ class ActorCriticTransformer(nn.Module):
                 actions = distribution.sample()
             else:
                 actions = torch.argmax(distribution.probs, dim=-1)
+        if isinstance(self.action_space, spaces.Box):
+            actions = torch.clip(actions, torch.tensor(self.action_space.low), torch.tensor(self.action_space.high))
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
 
