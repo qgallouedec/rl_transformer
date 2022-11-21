@@ -104,7 +104,7 @@ class ActorCriticTransformer(nn.Module):
             deterministic (bool): If actor acts deterinistially
 
         Returns:
-            Predicted actions, values and log_prob
+            values, actions, and log_prob
         """
         observations = preprocess(observations, self.observation_space)  # (..., L+1, *obs_shape) -> (..., L+1, obs_size)
         actions = preprocess(actions, self.action_space)  # (..., L, *action_shape) -> (..., L, action_size)
@@ -134,14 +134,20 @@ class ActorCriticTransformer(nn.Module):
                 actions = distribution.sample()
             else:
                 actions = torch.argmax(distribution.probs, dim=-1)
+            log_prob = distribution.log_prob(actions)
         if isinstance(self.action_space, spaces.Box):
             actions = torch.clip(
                 actions,
                 torch.tensor(self.action_space.low).to(actions.device),
                 torch.tensor(self.action_space.high).to(actions.device),
             )
-        log_prob = distribution.log_prob(actions)
-        return values.reshape((*input_shape, -1)), actions.reshape((*input_shape, -1)), log_prob.reshape((*input_shape, -1))
+            log_prob = torch.sum(distribution.log_prob(actions), dim=-1)
+
+        return (
+            values.reshape(input_shape),
+            actions.reshape((*input_shape, *get_space_shape(self.action_space))),
+            log_prob.reshape(input_shape),
+        )
 
     def act(self, observations: Tensor, actions: Tensor, deterministic: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         """
@@ -153,7 +159,7 @@ class ActorCriticTransformer(nn.Module):
             deterministic (bool): If actor acts deterinistially
 
         Returns:
-            Predicted next action
+            value, action, log_prob
         """
         with torch.no_grad():
             values, actions, log_prob = self.forward(observations, actions, deterministic=deterministic)
