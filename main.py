@@ -12,7 +12,7 @@ ac = ActorCriticTransformer(env, d_model=16).to(device)
 observation = env.reset()
 value = ac.get_value(observation)
 buffer.new_episode(observation, value)
-for _ in range(3000):
+for _ in range(5):
     observations, actions = buffer.get_current_episode()
     value, action, log_prob = ac.act(observations, actions)
     observation, reward, done, info = env.step(action)
@@ -22,10 +22,9 @@ for _ in range(3000):
         value = ac.get_value(observation)
         buffer.new_episode(observation, value)
 
-# observations, actions, rewards, done, infos, src_key_padding_mask = buffer.sample(5)
-# observations = torch.from_numpy(observations)
-# actions = torch.from_numpy(actions)
-# src_key_padding_mask = torch.from_numpy(src_key_padding_mask)
-# actions, values, log_prob = ac.forward(observations, actions, src_key_padding_mask)
+observations, values, actions, log_probs, rewards, dones, infos, src_key_padding_mask = buffer.sample(5)
+actions = actions[:, :-1]  # last action must be discarded (N, L+1, action_shape) -> (N, L, action_spape)
 
-# print(actions)
+values_, actions, log_prob = ac.forward(observations, actions, src_key_padding_mask)
+
+print(values_, values)
