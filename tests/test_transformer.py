@@ -24,8 +24,8 @@ def test_act(observation_space, action_space):
 
     observations = torch.tensor(np.array([observation_space.sample() for _ in range(13)]))
     actions = torch.tensor(np.array([action_space.sample() for _ in range(12)]))
-    action = ac.act(observations, actions).numpy()
-    assert action_space.contains(action)
+    _, action, _ = ac.act(observations, actions)
+    assert action_space.contains(action.numpy())
 
 
 @pytest.mark.parametrize("observation_space", SPACES)
@@ -45,6 +45,6 @@ def test_interract(observation_space, action_space):
             else:
                 actions = np.array([action_space.sample() for _ in range(t)])
             actions = torch.tensor(actions)
-            action, _, _ = ac.act(observations, actions)
+            _, action, _ = ac.act(observations, actions)
             _, _, done, _ = env.step(action)
             t += 1
